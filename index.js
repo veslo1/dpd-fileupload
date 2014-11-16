@@ -72,8 +72,11 @@ Fileupload.prototype.handle = function (ctx, next) {
 
 
         // Will send the response if all files have been processed
-        var processDone = function(err) {
-            if (err) return ctx.done(err);
+        var processDone = function(err, file) {
+            if (err) {
+				fs.unlink(file.path, function(err) {});
+				return ctx.done(err);
+			}
             remainingFile--;
             if (remainingFile === 0) {
                 debug("Response sent: ", resultFiles);
@@ -146,7 +149,7 @@ Fileupload.prototype.handle = function (ctx, next) {
                 }
                 if (self.events.upload) {
                     self.events.upload.run(ctx, {url: ctx.url, filesize: file.size, filename: ctx.url}, function(err) {
-                        if (err) return processDone(err);
+                        if (err) return processDone(err, file);
                         renameAndStore(file);
                     });
                 } else {
