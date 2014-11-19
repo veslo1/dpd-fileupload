@@ -9,6 +9,7 @@ var Resource   = require('deployd/lib/resource'),
     formidable = require('formidable'),
     fs         = require('fs'),
     md5        = require('MD5'),
+    gm         = require('gm'),
     mime       = require('mime');
 
 /**
@@ -22,7 +23,9 @@ function Fileupload(options) {
 
     this.config = {
         directory: this.config.directory || 'upload',
-        fullDirectory: __dirname + "/../../public/" + (this.config.directory || 'upload') + "/"
+        sizes: this.config.sizes.split(',') || ['200x200'],
+        fullDirectory: __dirname + "/../../public/" + (this.config.directory || 'upload') + "/",
+        uploadPath: "./public/" + (this.config.directory || 'upload') + "/"
     };
 
     if (this.name === this.config.directory) {
@@ -48,6 +51,11 @@ Fileupload.basicDashboard = {
             name: 'directory',
             type: 'text',
             description: 'Directory to save the uploaded files. Defaults to \'upload\'.'
+        },
+        {
+            name: 'sizes',
+            type: 'text',
+            description: 'Comma separated thumb sizes. Default to 200x200'
         }
     ]
 };
@@ -67,6 +75,7 @@ Fileupload.prototype.handle = function (ctx, next) {
             remainingFile = 0,
             storedObject = {},
             uniqueFilename = false,
+            sizes = this.config.sizes,
             subdir,
             creator;
 
@@ -130,6 +139,33 @@ Fileupload.prototype.handle = function (ctx, next) {
                 // Store MIME type in object
                 storedObject.mimeType = mime.lookup(file.name);
 
+                //Resize
+                sizes.forEach(function(size){
+
+                    var imgDir = file.path.replace(file.path.split('/').pop(),'');
+
+                    try {
+                        fs.statSync(imgDir+size).isDirectory();
+                    } catch (er) {
+                        fs.mkdir(imgDir+size);
+                    }
+
+                    try {
+                        var imgSize = size.split('x');
+                        var imgExt = file.name.split('.').pop();
+                        var imgName = file.name.replace(imgExt,'');
+
+                        gm(imgDir+imgName+imgExt)
+                            .resize(imgSize[0], imgSize[1])
+                            .noProfile()
+                            .write(imgDir+size+'/'+imgName+imgExt, function (err) {
+                                if (err) console.log(err);
+                                if (!err) console.log('done');
+                            });
+                    } catch (err){}
+
+                });
+
                 self.store.insert(storedObject, function(err, result) {
                     if (err) return processDone(err);
                     debug('stored after event.upload.run %j', err || result || 'none');
@@ -148,7 +184,7 @@ Fileupload.prototype.handle = function (ctx, next) {
                     file.name = md5(Date.now()) + '.' + file.name.split('.').pop();
                 }
                 if (self.events.upload) {
-                    self.events.upload.run(ctx, {url: ctx.url, filesize: file.size, filename: ctx.url}, function(err) {
+                    self.events.upload.run(ctx, {url: ctx.url, filesize: file.size, filename: file.name.split('.')[0], type: file.type, path: file.path.replace(file.path.split('/').pop(),''), ext: '.' + file.name.split('.').pop(), sizes: sizes }, function(err) {
                         if (err) return processDone(err, file);
                         renameAndStore(file);
                     });
@@ -205,7 +241,8 @@ Fileupload.prototype.get = function(ctx, next) {
 Fileupload.prototype.del = function(ctx, next) {
     var self = this,
         fileId = ctx.url.split('/')[1],
-        uploadDir = this.config.fullDirectory;
+        uploadDir = this.config.fullDirectory,
+        sizes = this.config.sizes;
         
     this.store.find({id: fileId}, function(err, result) {
         if (err) return ctx.done(err);
@@ -219,6 +256,11 @@ Fileupload.prototype.del = function(ctx, next) {
                 if (err) return ctx.done(err);
                 fs.unlink(uploadDir + subdir + "/" + result.filename, function(err) {
                     if (err) return ctx.done(err);
+
+                    sizes.forEach(function(size){
+                        fs.unlink(uploadDir + subdir + "/"+ size + "/" + result.filename, function(err) {});
+                    });
+
                     ctx.done(null, {statusCode: 200, message: "File " + result.filename + " successfuly deleted"});
                 });
             });
